@@ -11,6 +11,7 @@ use App\Http\Controllers\Cart\CartController;
 use App\Http\Controllers\Order\OrderController;
 use App\Http\Controllers\Favourite\FavouriteController;
 use App\Http\Controllers\Notification\NotificationController;
+use App\Http\Controllers\Points\PointsController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -51,7 +52,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/removeFromFavourites/{product_id}', [FavouriteController::class, 'removeFromFavourites']);
     Route::post('/changePassword', [AuthController::class, 'changePassword']);
     Route::post('/saveDeviceToken', [NotificationController::class, 'saveDeviceToken']);
+    Route::get('/notifications', [NotificationController::class, 'notifications']);
+    Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+    Route::post('/notifications/{notification_id}/read', [NotificationController::class, 'markAsRead']);
+    Route::post('/notifications/read-all', [NotificationController::class, 'markAllAsRead']);
     Route::get('/getLatestOffers', [ProductController::class, 'getLatestOffers']);
     Route::get('/companies', [CategoryController::class, 'getCompanies']);
     Route::get('/companies/{company_id}/categories', [CategoryController::class, 'getCategoriesByCompany']);
+
+    // نظام النقاط والمكافآت (Points System)
+    Route::get('/points/summary', [PointsController::class, 'summary']);
+    Route::get('/points/gifts', [PointsController::class, 'gifts']);
+    Route::post('/points/redeem/{gift_id}', [PointsController::class, 'redeem']);
+    Route::get('/points/history', [PointsController::class, 'history']);
 });

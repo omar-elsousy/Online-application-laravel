@@ -167,10 +167,13 @@ class ImageServiceImpl implements ImageService
         DB::connection('oracle_sales')
             ->table('online_app_images')
             ->insert([
-                'type'       => 'section',
-                'ref_id'     => null,
-                'image_path' => $path,
-                'created_at' => now(),
+                'type'              => 'section',
+                'ref_id'            => null,
+                'image_path'        => $path,
+                'is_active_section' => 1,
+                'sort_order'        => 0,
+                'action_type'       => 'none',
+                'created_at'        => now(),
             ]);
 
         return redirect(asset('dashboard/images'));

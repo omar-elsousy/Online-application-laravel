@@ -91,6 +91,14 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\Dashboard\LatestOffers\LatestOffersService::class,
             \App\Services\Dashboard\LatestOffers\Impl\LatestOffersServiceImpl::class
         );
+        $this->app->bind(
+            \App\Services\Dashboard\Points\PointsService::class,
+            \App\Services\Dashboard\Points\Impl\PointsServiceImpl::class
+        );
+        $this->app->bind(
+            \App\Services\Points\PointsService::class,
+            \App\Services\Points\Impl\PointsServiceImpl::class
+        );
     }
 
     public function boot()

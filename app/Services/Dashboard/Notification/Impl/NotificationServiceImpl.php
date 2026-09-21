@@ -34,6 +34,12 @@ class NotificationServiceImpl implements NotificationService
             'body'  => 'required',
         ]);
 
+        $appNotifications = app(\App\Services\Notification\NotificationService::class);
+        $users = DB::connection('oracle_sales')->table('online_app_users')->select('id')->get();
+        foreach ($users as $user) {
+            $appNotifications->saveNotification($user->id, $request->title, $request->body);
+        }
+
         $tokens = DB::connection('oracle_sales')
                     ->table('online_app_device_tokens')
                     ->pluck('token')
@@ -66,6 +72,9 @@ class NotificationServiceImpl implements NotificationService
             'body'    => 'required',
         ]);
 
+        app(\App\Services\Notification\NotificationService::class)
+            ->saveNotification((int) $request->user_id, $request->title, $request->body);
+
         $tokens = DB::connection('oracle_sales')
                     ->table('online_app_device_tokens')
                     ->where('user_id', $request->user_id)
@@ -91,3 +100,5 @@ class NotificationServiceImpl implements NotificationService
         return redirect(asset('dashboard/notifications'))->with('success', 'تم إرسال الإشعار بنجاح');
     }
 }
+
+

@@ -95,28 +95,28 @@ return [
 
         ///////////////////////////////////////////////////////////////////////////////////////////////////
         'oracle_lmidc' => [
-            'driver'   => 'oracle',
-            'host'     => env('ORACLE_HOST'),
-            'port'     => env('ORACLE_PORT'),
-            'database' => env('ORACLE_SID'),
-            'service_name' => '',
-            'username' => env('ORACLE_LMIDC_USERNAME'),
-            'password' => env('ORACLE_LMIDC_PASSWORD'),
-            'charset'  => 'AL32UTF8',
-            'prefix'   => '',
-        ],
+        'driver'   => 'oracle',
+        'host'     => env('ORACLE_HOST'),
+        'port'     => env('ORACLE_PORT'),
+        'database' => env('ORACLE_SID'),
+        'service_name' => '',
+        'username' => env('ORACLE_LMIDC_USERNAME'),
+        'password' => env('ORACLE_LMIDC_PASSWORD'),
+        'charset'  => 'AL32UTF8',
+        'prefix'   => '',
+    ],
 
-        'oracle_sales' => [
-            'driver'   => 'oracle',
-            'host'     => env('ORACLE_HOST'),
-            'port'     => env('ORACLE_PORT'),
-            'database' => env('ORACLE_SID'),
-            'service_name' => '',
-            'username' => env('ORACLE_SALES_USERNAME'),
-            'password' => env('ORACLE_SALES_PASSWORD'),
-            'charset'  => 'AL32UTF8',
-            'prefix'   => '',
-        ]
+    'oracle_sales' => [
+        'driver'   => 'oracle',
+        'host'     => env('ORACLE_HOST'),
+        'port'     => env('ORACLE_PORT'),
+        'database' => env('ORACLE_SID'),
+        'service_name' => '',
+        'username' => env('ORACLE_SALES_USERNAME'),
+        'password' => env('ORACLE_SALES_PASSWORD'),
+        'charset'  => 'AL32UTF8',
+        'prefix'   => '',
+    ],
         ],
         ////////////////////////////////////////////////////////////////////////////////////////////////////
     /*

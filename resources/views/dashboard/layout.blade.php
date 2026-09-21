@@ -82,6 +82,9 @@
         <a href="{{ asset('dashboard/users') }}" class="{{ request()->is('dashboard/users*') ? 'active' : '' }}">
             <i class="fas fa-users me-2"></i> العملاء
         </a>
+        <a href="{{ asset('dashboard/points') }}" class="{{ request()->is('dashboard/points*') ? 'active' : '' }}">
+            <i class="fas fa-coins me-2"></i> نظام النقاط
+        </a>
         @if(session('admin')->role == 'super_admin')
         <a href="{{ asset('dashboard/admins') }}" class="{{ request()->is('dashboard/admins*') ? 'active' : '' }}">
             <i class="fas fa-user-shield me-2"></i> الأدمنز

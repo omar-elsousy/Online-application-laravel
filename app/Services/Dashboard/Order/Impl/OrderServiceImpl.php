@@ -66,14 +66,44 @@ class OrderServiceImpl implements OrderService
                     ->where('id', $order_id)
                     ->first();
 
-        if (!$order || $order->status != 'placed') {
+        if (!$order || $order->status != 1) {
             return redirect(asset('dashboard/orders'));
         }
 
         DB::connection('oracle_sales')
             ->table('orders_online_app')
             ->where('id', $order_id)
-            ->update(['status' => 'canceled']);
+            ->update(['status' => 6]);
+
+        try {
+            $earnedPoints = DB::connection('oracle_sales')
+                ->table('online_app_points_history')
+                ->where('order_id', $order_id)
+                ->where('user_id', $order->user_id)
+                ->where('type', 'earned_order')
+                ->sum('points');
+
+            if ($earnedPoints > 0) {
+                DB::connection('oracle_sales')
+                    ->table('online_app_users')
+                    ->where('id', $order->user_id)
+                    ->decrement('points', $earnedPoints);
+
+                DB::connection('oracle_sales')
+                    ->table('online_app_points_history')
+                    ->insert([
+                        'user_id'     => $order->user_id,
+                        'order_id'    => $order_id,
+                        'gift_id'     => null,
+                        'points'      => -$earnedPoints,
+                        'type'        => 'order_canceled',
+                        'description' => "خصم نقاط لإلغاء الطلب من لوحة التحكم رقم #{$order_id}",
+                        'created_at'  => now(),
+                    ]);
+            }
+        } catch (\Throwable $e) {
+            \Log::error('Dashboard cancel order points rollback error: ' . $e->getMessage());
+        }
 
         return redirect(asset('dashboard/orders'));
 

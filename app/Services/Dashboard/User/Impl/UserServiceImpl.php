@@ -22,13 +22,13 @@ class UserServiceImpl implements UserService
             $placedOrders = DB::connection('oracle_sales')
                                 ->table('orders_online_app')
                                 ->where('user_id', $user->id)
-                                ->where('status', 'placed')
+                                ->where('status', 1)
                                 ->count();
 
             $canceledOrders = DB::connection('oracle_sales')
                                 ->table('orders_online_app')
                                 ->where('user_id', $user->id)
-                                ->where('status', 'canceled')
+                                ->where('status', 6)
                                 ->count();
 
             $pos = DB::connection('oracle_lmidc')

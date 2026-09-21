@@ -109,17 +109,87 @@ class OrderServiceImpl implements OrderService
             ->where('user_id', $user_id)
             ->delete();
 
+        // احتساب النقاط بناءً على قواعد الأقسام
+        $earnedPoints = 0;
+        try {
+            $activeRules = DB::connection('oracle_sales')
+                ->table('online_app_points_rules')
+                ->where('is_active', 1)
+                ->get();
+
+            if ($activeRules->isNotEmpty()) {
+                foreach ($items as $item) {
+                    $prod = DB::connection('oracle_lmidc')
+                        ->table('to_sfa_products_android')
+                        ->where('product_id', $item['product_id'])
+                        ->first();
+                    $familyId = $prod ? $prod->family_id : null;
+
+                    // البحث عن قواعد مخصصة لهذا القسم أولاً، وإلا القواعد العامة
+                    $matchedRules = $activeRules->filter(function ($r) use ($familyId) {
+                        return $r->family_id == $familyId;
+                    });
+
+                    if ($matchedRules->isEmpty()) {
+                        $matchedRules = $activeRules->filter(function ($r) {
+                            return is_null($r->family_id);
+                        });
+                    }
+
+                    foreach ($matchedRules as $rule) {
+                        if ($rule->rule_type === 'quantity' && $rule->threshold > 0) {
+                            $times = floor($item['quantity'] / $rule->threshold);
+                            if ($times > 0) {
+                                $earnedPoints += (int)($times * $rule->points);
+                            }
+                        } elseif ($rule->rule_type === 'amount' && $rule->threshold > 0) {
+                            $times = floor($item['total_price'] / $rule->threshold);
+                            if ($times > 0) {
+                                $earnedPoints += (int)($times * $rule->points);
+                            }
+                        }
+                    }
+                }
+
+                if ($earnedPoints > 0) {
+                    DB::connection('oracle_sales')
+                        ->table('online_app_users')
+                        ->where('id', $user_id)
+                        ->increment('points', $earnedPoints);
+
+                    DB::connection('oracle_sales')
+                        ->table('online_app_points_history')
+                        ->insert([
+                            'user_id'     => $user_id,
+                            'order_id'    => $order_id,
+                            'gift_id'     => null,
+                            'points'      => $earnedPoints,
+                            'type'        => 'earned_order',
+                            'description' => "مكافأة نقاط من الطلب رقم #{$order_id}",
+                            'created_at'  => now(),
+                        ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::error('Points calculation error: ' . $e->getMessage());
+        }
+
         // بعت notification
         $notificationService = app(\App\Services\Notification\NotificationService::class);
+        $notifBody = $earnedPoints > 0
+            ? "تم استلام طلبك بنجاح وجاري تجهيزه. وحصلت على {$earnedPoints} نقطة مكافأة! 🎉"
+            : 'تم استلام طلبك بنجاح وجاري تجهيزه';
+
         $notificationService->sendNotification(
             $user_id,
             'تم تأكيد طلبك ✅',
-            'تم استلام طلبك بنجاح وجاري تجهيزه'
+            $notifBody
         );
 
         return response()->json([
-            'message'  => 'تم طلب الأوردر بنجاح',
-            'order_id' => $order_id,
+            'message'       => 'تم طلب الأوردر بنجاح',
+            'order_id'      => $order_id,
+            'earned_points' => $earnedPoints,
         ], 201);
     }
 
@@ -297,6 +367,37 @@ class OrderServiceImpl implements OrderService
             ->table('orders_online_app')
             ->where('id', $order_id)
             ->update(['status' => 6]);
+
+        // استرجاع وخصم النقاط المكتسبة من هذا الطلب إن وجدت
+        try {
+            $earnedPoints = DB::connection('oracle_sales')
+                ->table('online_app_points_history')
+                ->where('order_id', $order_id)
+                ->where('user_id', $user_id)
+                ->where('type', 'earned_order')
+                ->sum('points');
+
+            if ($earnedPoints > 0) {
+                DB::connection('oracle_sales')
+                    ->table('online_app_users')
+                    ->where('id', $user_id)
+                    ->decrement('points', $earnedPoints);
+
+                DB::connection('oracle_sales')
+                    ->table('online_app_points_history')
+                    ->insert([
+                        'user_id'     => $user_id,
+                        'order_id'    => $order_id,
+                        'gift_id'     => null,
+                        'points'      => -$earnedPoints,
+                        'type'        => 'order_canceled',
+                        'description' => "خصم نقاط لإلغاء الطلب رقم #{$order_id}",
+                        'created_at'  => now(),
+                    ]);
+            }
+        } catch (\Throwable $e) {
+            \Log::error('Cancel order points rollback error: ' . $e->getMessage());
+        }
 
         // بعت notification
         $notificationService = app(\App\Services\Notification\NotificationService::class);

@@ -42,4 +42,23 @@ class NotificationController extends Controller
     {
         return $this->notificationService->saveDeviceToken($request);
     }
+    public function notifications(Request $request)
+    {
+        return $this->notificationService->notifications($request);
+    }
+
+    public function unreadCount(Request $request)
+    {
+        return $this->notificationService->unreadCount($request);
+    }
+
+    public function markAsRead(Request $request, int $notificationId)
+    {
+        return $this->notificationService->markAsRead($request, $notificationId);
+    }
+
+    public function markAllAsRead(Request $request)
+    {
+        return $this->notificationService->markAllAsRead($request);
+    }
 }

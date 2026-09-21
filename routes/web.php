@@ -12,6 +12,7 @@ use App\Http\Controllers\Dashboard\SectionController;
 use App\Http\Controllers\Dashboard\NotificationController;
 use App\Http\Controllers\Dashboard\VisibilityController;
 use App\Http\Controllers\Dashboard\StockController;
+use App\Http\Controllers\Dashboard\PointsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -63,6 +64,16 @@ Route::prefix('dashboard')->group(function () {
         Route::post('/removeLatestOffer/{product_id}', [LatestOffersController::class, 'removeLatestOffer']);
         Route::get('/stock', [StockController::class, 'stock']);
         Route::post('/toggleStock/{product_id}/{warehouse_id}', [StockController::class, 'toggleStock']);
+        Route::get('/points', [PointsController::class, 'points']);
+        Route::post('/points/addRule', [PointsController::class, 'addRule']);
+        Route::post('/points/toggleRule/{id}', [PointsController::class, 'toggleRule']);
+        Route::post('/points/deleteRule/{id}', [PointsController::class, 'deleteRule']);
+        Route::post('/points/updateSettings', [PointsController::class, 'updateSettings']);
+        Route::post('/points/resetAllPoints', [PointsController::class, 'resetAllPoints']);
+        Route::post('/points/addGift', [PointsController::class, 'addGift']);
+        Route::post('/points/toggleGift/{id}', [PointsController::class, 'toggleGift']);
+        Route::post('/points/deleteGift/{id}', [PointsController::class, 'deleteGift']);
+        Route::post('/points/updateRedemptionStatus/{id}', [PointsController::class, 'updateRedemptionStatus']);
     });
 
     Route::middleware('super.admin')->group(function () {
