@@ -16,6 +16,26 @@ class CartServiceImpl implements CartService
 
         $user_id = $request->user()->id;
 
+        $product = DB::connection('oracle_lmidc')
+            ->table('to_sfa_products_android')
+            ->where('product_id', $product_id)
+            ->first();
+
+        if (!$product) {
+            return response()->json(['message' => 'المنتج غير موجود'], 404);
+        }
+
+        $price = DB::connection('oracle_lmidc')
+            ->table('product_price_list')
+            ->where('product_id', $product_id)
+            ->where('line_price_id', 1)
+            ->first();
+
+        if (!$price || $price->pricelist_carton === null || $price->pricelist_carton <= 0) {
+            return response()->json([
+                'message' => 'لا يمكن إضافة هذا المنتج لأن سعره غير متاح حالياً',
+            ], 422);
+        }
         // تحقق من الستوك
         $user = DB::connection('oracle_sales')
             ->table('online_app_users')
@@ -83,7 +103,7 @@ class CartServiceImpl implements CartService
             ], 200);
         }
 
-        $items = $cartItems->map(function ($cartItem) {
+        $items = $cartItems->map(function ($cartItem) use ($user_id) {
             // جيب بيانات المنتج
             $product = DB::connection('oracle_lmidc')
                 ->table('to_sfa_products_android')
@@ -97,6 +117,15 @@ class CartServiceImpl implements CartService
                 ->where('line_price_id', 1)
                 ->first();
 
+            // تجاهل أي عنصر قديم لم يعد له منتج أو سعر صالح.
+            if (!$product || !$price || $price->pricelist_carton === null || $price->pricelist_carton <= 0) {
+                DB::connection('oracle_sales')
+                    ->table('cart_online_app')
+                    ->where('id', $cartItem->id)
+                    ->delete();
+
+                return null;
+            }
             // جيب الصورة
             $image = DB::connection('oracle_sales')
                 ->table('online_app_images')
@@ -121,6 +150,8 @@ class CartServiceImpl implements CartService
                 'total_price'          => $total_price,
             ];
         });
+
+        $items = $items->filter()->values();
 
         $cart_total = round($items->sum('total_price'), 1);
 

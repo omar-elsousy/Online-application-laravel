@@ -29,6 +29,7 @@ class ProductServiceImpl implements ProductService
                     ->where('pr.line_price_id', '=', 1);
             })
             ->where('p.family_id', $family_id)
+            ->where('pr.pricelist_carton', '>', 0)
             ->whereNotIn('p.product_id', $hiddenProducts)
             ->select(
                 'p.product_id',
@@ -92,6 +93,12 @@ class ProductServiceImpl implements ProductService
             ->where('product_id', $product->product_id)
             ->where('line_price_id', 1)
             ->first();
+
+        if (!$price || $price->pricelist_carton === null || $price->pricelist_carton <= 0) {
+            return response()->json([
+                'message' => 'سعر هذا المنتج غير متاح حالياً',
+            ], 422);
+        }
 
         $tax = round(($price->pricelist_carton * ($price->tax_percentage / 100)) + $price->product_tax, 1);
 
@@ -192,12 +199,11 @@ class ProductServiceImpl implements ProductService
                 ->where('line_price_id', 1)
                 ->first();
 
-            if (!$price) {
+            if (!$price || $price->pricelist_carton === null || $price->pricelist_carton <= 0) {
                 return null;
             }
 
             $tax = round(($price->pricelist_carton * ($price->tax_percentage / 100)) + $price->product_tax, 1);
-
             return [
                 'image'      => $imagePath ? asset('storage/' . $imagePath) : null,
                 'product_id' => $product->product_id,

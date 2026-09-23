@@ -57,6 +57,10 @@ class FavouriteServiceImpl implements FavouriteService
                                         ->where('line_price_id', 1)
                                         ->first();
 
+                            if (!$product || !$price || $price->pricelist_carton === null || $price->pricelist_carton <= 0) {
+                                return null;
+                            }
+
                             $image = DB::connection('oracle_sales')
                                         ->table('online_app_images')
                                         ->where('type', 'product')
@@ -72,7 +76,7 @@ class FavouriteServiceImpl implements FavouriteService
                                 'name' => $product ? $product->product_ename : 'منتج محذوف',
                                 'price'      => $price,
                             ];
-                        });
+                        })->filter()->values();
 
         return response()->json([
             'data' => $favourites,
