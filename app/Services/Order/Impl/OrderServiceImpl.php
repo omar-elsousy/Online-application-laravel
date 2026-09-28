@@ -5,6 +5,8 @@ namespace App\Services\Order\Impl;
 use App\Services\Order\OrderService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\Incentive\IncentiveService;
+use App\Support\WarehouseIds;
 
 class OrderServiceImpl implements OrderService
 {
@@ -41,16 +43,34 @@ class OrderServiceImpl implements OrderService
             ->table('online_app_users')
             ->where('id', $user_id)
             ->first();
+        $warehouseIds = WarehouseIds::fromUser($user);
 
+        $incentives = app(IncentiveService::class);
+        $requestedCredits = collect($request->input('wallet_credits', []));
+        $availableCredits = $incentives->availableWallet($user, $cartItems->pluck('product_id')->all());
+        $walletCredits = $availableCredits->filter(function ($credit) use ($requestedCredits) {
+            return $requestedCredits->contains(function ($requested) use ($credit) {
+                return (int) ($requested['incentive_type_id'] ?? 0) === (int) $credit->incentive_type_id
+                    && (string) ($requested['from_date'] ?? '') === (string) $credit->from_date
+                    && (string) ($requested['to_date'] ?? '') === (string) $credit->to_date;
+            });
+        })->values();
+        if ($walletCredits->count() !== $requestedCredits->count()) {
+            return response()->json(['message' => 'رصيد المحفظة المختار غير متاح حالياً'], 422);
+        }
+        $preview = $incentives->previewForUser($user, $cartItems, $walletCredits->all(), $request->input('removed_gift_incentive_ids', []));
+        if ($walletCredits->isNotEmpty() && $preview['totals']['wallet_used'] <= 0) {
+            return response()->json(['message' => 'إجمالي الطلب يجب أن يكون أكبر من رصيد المحفظة المستخدم'], 422);
+        }
         // تحقق من الستوك لكل منتج في الكارت
         foreach ($cartItems as $cartItem) {
-            $stock = DB::connection('oracle_sales')
+            $stockRows = DB::connection('oracle_sales')
                 ->table('online_app_stock')
                 ->where('product_id', $cartItem->product_id)
-                ->where('warehouse_id', $user->warehouse_id)
-                ->first();
+                ->whereIn('warehouse_id', $warehouseIds)
+                ->get();
 
-            if ($stock && !$stock->in_stock) {
+            if (!WarehouseIds::isAvailableInAnyWarehouse($stockRows, $warehouseIds)) {
                 $product = DB::connection('oracle_lmidc')
                     ->table('to_sfa_products_android')
                     ->where('product_id', $cartItem->product_id)
@@ -62,41 +82,27 @@ class OrderServiceImpl implements OrderService
             }
         }
 
-        $total_price = 0;
-        $items = [];
-
-        foreach ($cartItems as $cartItem) {
-            $price = DB::connection('oracle_lmidc')
-                ->table('product_price_list')
-                ->where('product_id', $cartItem->product_id)
-                ->where('line_price_id', 1)
-                ->first();
-
-            $unit_price           = round($price->pricelist_carton, 1);
-            $unit_tax             = round(($price->pricelist_carton * ($price->tax_percentage / 100)) + $price->product_tax, 1);
-            $unit_price_after_tax = round($unit_price + $unit_tax, 1);
-            $item_total           = round($unit_price_after_tax * $cartItem->quantity, 1);
-            $total_price         += $item_total;
-
-            $items[] = [
-                'product_id'           => $cartItem->product_id,
-                'quantity'             => $cartItem->quantity,
-                'unit_price'           => $unit_price,
-                'unit_tax'             => $unit_tax,
-                'unit_price_after_tax' => $unit_price_after_tax,
-                'total_price'          => $item_total,
+        $total_price = $preview['totals']['grand_total'];
+        $items = collect(array_merge($preview['items'], $preview['gift_items']))->map(function ($line) {
+            return [
+                'product_id' => $line['product_id'], 'quantity' => $line['quantity'],
+                'unit_price' => $line['unit_price'], 'unit_tax' => $line['tax'],
+                'unit_price_after_tax' => $line['total'] / max(1, $line['quantity']),
+                'total_price' => $line['total'], 'discount_applied' => $line['discount'],
+                'is_gift' => !empty($line['is_gift']) ? 1 : 0,
+                'source_incentive_id' => $line['source_incentive_id'] ?? null,
             ];
+        })->all();
+
+        $order_id = DB::connection('oracle_sales')->table('orders_online_app')->insertGetId([
+            'user_id' => $user_id, 'total_price' => round($total_price, 2), 'status' => 1, 'created_at' => now(),
+        ]);
+        try {
+            $incentives->redeemForOrder($user, $order_id, $preview, $walletCredits);
+        } catch (\Throwable $e) {
+            DB::connection('oracle_sales')->table('orders_online_app')->where('id', $order_id)->update(['status' => 6]);
+            return response()->json(['message' => 'تعذر استخدام الحافز أو رصيد المحفظة، حاول مرة أخرى'], 409);
         }
-
-        $order_id = DB::connection('oracle_sales')
-            ->table('orders_online_app')
-            ->insertGetId([
-                'user_id'     => $user_id,
-                'total_price' => round($total_price, 1),
-                'status'      => 1,
-                'created_at'  => now(),
-            ]);
-
         foreach ($items as $item) {
             $item['order_id'] = $order_id;
             DB::connection('oracle_sales')
@@ -119,6 +125,7 @@ class OrderServiceImpl implements OrderService
 
             if ($activeRules->isNotEmpty()) {
                 foreach ($items as $item) {
+                    if ((int) ($item['is_gift'] ?? 0) === 1) continue;
                     $prod = DB::connection('oracle_lmidc')
                         ->table('to_sfa_products_android')
                         ->where('product_id', $item['product_id'])
@@ -263,8 +270,30 @@ class OrderServiceImpl implements OrderService
                     'unit_tax'             => $item->unit_tax,
                     'unit_price_after_tax' => $item->unit_price_after_tax,
                     'total_price'          => $item->total_price,
+                    'discount_applied'     => $item->discount_applied ?? 0,
+                    'is_gift'              => $item->is_gift ?? 0,
+                    'source_incentive_id'  => $item->source_incentive_id,
                 ];
             });
+
+        $walletCredits = DB::connection('oracle_lmidc')
+            ->table('online_app_fix_log')
+            ->where('order_id', $order_id)
+            ->orderBy('redeemed_at')
+            ->get()
+            ->map(function ($credit) {
+                return [
+                    'incentive_type_id' => $credit->incentive_type_id,
+                    'incentive_value' => $credit->incentive_value,
+                    'from_date' => $credit->assign_from_date,
+                    'to_date' => $credit->assign_to_date,
+                    'status' => $credit->status,
+                    'redeemed_at' => $credit->redeemed_at,
+                ];
+            });
+        $walletUsed = round((float) $walletCredits
+            ->where('status', 'USED')
+            ->sum('incentive_value'), 2);
 
         return response()->json([
             'data' => [
@@ -279,6 +308,8 @@ class OrderServiceImpl implements OrderService
                 'final_price' => $order->total_price,
                 'created_at'  => $order->created_at,
                 'items'       => $items,
+                'wallet_used' => $walletUsed,
+                'wallet_credits' => $walletCredits,
             ],
         ], 200);
     }
@@ -318,6 +349,9 @@ class OrderServiceImpl implements OrderService
                             'unit_tax'             => $item->unit_tax,
                             'unit_price_after_tax' => $item->unit_price_after_tax,
                             'total_price'          => $item->total_price,
+                    'discount_applied'     => $item->discount_applied ?? 0,
+                    'is_gift'              => $item->is_gift ?? 0,
+                    'source_incentive_id'  => $item->source_incentive_id,
                         ];
                     });
 
@@ -367,6 +401,8 @@ class OrderServiceImpl implements OrderService
             ->table('orders_online_app')
             ->where('id', $order_id)
             ->update(['status' => 6]);
+
+        app(IncentiveService::class)->releaseForOrder($request->user(), $order_id);
 
         // استرجاع وخصم النقاط المكتسبة من هذا الطلب إن وجدت
         try {

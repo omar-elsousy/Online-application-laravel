@@ -5,6 +5,7 @@ namespace App\Services\Cart\Impl;
 use App\Services\Cart\CartService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\WarehouseIds;
 
 class CartServiceImpl implements CartService
 {
@@ -42,13 +43,14 @@ class CartServiceImpl implements CartService
             ->where('id', $user_id)
             ->first();
 
-        $stock = DB::connection('oracle_sales')
+        $warehouseIds = WarehouseIds::fromUser($user);
+        $stockRows = DB::connection('oracle_sales')
             ->table('online_app_stock')
             ->where('product_id', $product_id)
-            ->where('warehouse_id', $user->warehouse_id)
-            ->first();
+            ->whereIn('warehouse_id', $warehouseIds)
+            ->get();
 
-        if ($stock && !$stock->in_stock) {
+        if (!WarehouseIds::isAvailableInAnyWarehouse($stockRows, $warehouseIds)) {
             return response()->json([
                 'message' => 'المنتج ده out of stock',
             ], 400);
@@ -103,46 +105,48 @@ class CartServiceImpl implements CartService
             ], 200);
         }
 
-        $items = $cartItems->map(function ($cartItem) use ($user_id) {
-            // جيب بيانات المنتج
-            $product = DB::connection('oracle_lmidc')
-                ->table('to_sfa_products_android')
-                ->where('product_id', $cartItem->product_id)
-                ->first();
+        $productIds = $cartItems->pluck('product_id')->map(fn ($id) => (string) $id)->unique()->values();
+        $products = DB::connection('oracle_lmidc')
+            ->table('to_sfa_products_android')
+            ->whereIn('product_id', $productIds)
+            ->get(['product_id', 'product_ename'])
+            ->keyBy(fn ($product) => (string) $product->product_id);
+        $prices = DB::connection('oracle_lmidc')
+            ->table('product_price_list')
+            ->whereIn('product_id', $productIds)
+            ->where('line_price_id', 1)
+            ->get(['product_id', 'pricelist_carton', 'tax_percentage', 'product_tax'])
+            ->keyBy(fn ($price) => (string) $price->product_id);
+        $images = DB::connection('oracle_sales')
+            ->table('online_app_images')
+            ->where('type', 'product')
+            ->whereIn('ref_id', $productIds)
+            ->get(['ref_id', 'image_path'])
+            ->keyBy(fn ($image) => (string) $image->ref_id);
 
-            // جيب السعر والضريبة
-            $price = DB::connection('oracle_lmidc')
-                ->table('product_price_list')
-                ->where('product_id', $cartItem->product_id)
-                ->where('line_price_id', 1)
-                ->first();
+        $invalidCartIds = [];
+        $items = $cartItems->map(function ($cartItem) use ($products, $prices, $images, &$invalidCartIds) {
+            $productId = (string) $cartItem->product_id;
+            $product = $products->get($productId);
+            $price = $prices->get($productId);
 
             // تجاهل أي عنصر قديم لم يعد له منتج أو سعر صالح.
             if (!$product || !$price || $price->pricelist_carton === null || $price->pricelist_carton <= 0) {
-                DB::connection('oracle_sales')
-                    ->table('cart_online_app')
-                    ->where('id', $cartItem->id)
-                    ->delete();
-
+                $invalidCartIds[] = $cartItem->id;
                 return null;
             }
-            // جيب الصورة
-            $image = DB::connection('oracle_sales')
-                ->table('online_app_images')
-                ->where('type', 'product')
-                ->where('ref_id', $cartItem->product_id)
-                ->value('image_path');
+            $image = $images->get($productId)?->image_path;
 
             // احسب السعر
             $unit_price          = round($price->pricelist_carton, 1);
-            $unit_tax            = round(($price->pricelist_carton * ($price->tax_percentage / 100)) + $price->product_tax, 1);
+            $unit_tax            = round(($price->pricelist_carton * (($price->tax_percentage ?? 0) / 100)) + ($price->product_tax ?? 0), 1);
             $unit_price_after_tax = round($unit_price + $unit_tax, 1);
             $total_price         = round($unit_price_after_tax * $cartItem->quantity, 1);
 
             return [
                 'image'                => $image ? asset('storage/' . $image) : null,
                 'product_id'           => $cartItem->product_id,
-                'name' => $product ? $product->product_ename : 'منتج محذوف',
+                'name' => $product->product_ename,
                 'quantity'             => $cartItem->quantity,
                 'unit_price'           => $unit_price,
                 'unit_tax'             => $unit_tax,
@@ -150,6 +154,13 @@ class CartServiceImpl implements CartService
                 'total_price'          => $total_price,
             ];
         });
+
+        if ($invalidCartIds) {
+            DB::connection('oracle_sales')
+                ->table('cart_online_app')
+                ->whereIn('id', $invalidCartIds)
+                ->delete();
+        }
 
         $items = $items->filter()->values();
 

@@ -4,6 +4,8 @@ namespace App\Services\Product\Impl;
 
 use App\Services\Product\ProductService;
 use Illuminate\Support\Facades\DB;
+use App\Services\Incentive\IncentiveService;
+use App\Support\WarehouseIds;
 
 class ProductServiceImpl implements ProductService
 {
@@ -20,7 +22,7 @@ class ProductServiceImpl implements ProductService
             ->where('id', auth()->id())
             ->first();
 
-        $warehouseId = $user->warehouse_id;
+        $warehouseIds = WarehouseIds::fromUser($user);
 
         $products = DB::connection('oracle_lmidc')
             ->table('to_sfa_products_android as p')
@@ -39,29 +41,34 @@ class ProductServiceImpl implements ProductService
                 'pr.product_tax'
             )
             ->orderBy('p.product_id')
-            ->get()
-            ->map(function ($product) use ($warehouseId) {
+            ->get();
+
+        $locale = request()->getPreferredLanguage(['ar', 'en']) ?? 'en';
+        $productIds = $products->pluck('product_id')->all();
+        $teasers = app(IncentiveService::class)->teasersForProducts(auth()->user(), $productIds, $locale);
+        $images = $productIds
+            ? DB::connection('oracle_sales')->table('online_app_images')
+                ->where('type', 'product')->whereIn('ref_id', $productIds)
+                ->pluck('image_path', 'ref_id')
+            : collect();
+        $stocks = $productIds && $warehouseIds
+            ? DB::connection('oracle_sales')->table('online_app_stock')
+                ->whereIn('product_id', $productIds)->whereIn('warehouse_id', $warehouseIds)
+                ->get()->groupBy('product_id')
+            : collect();
+
+        $products = $products->map(function ($product) use ($warehouseIds, $teasers, $images, $stocks) {
                 $tax = ($product->pricelist_carton * ($product->tax_percentage / 100)) + $product->product_tax;
-
-                $image = DB::connection('oracle_sales')
-                    ->table('online_app_images')
-                    ->where('type', 'product')
-                    ->where('ref_id', $product->product_id)
-                    ->value('image_path');
-
-                // جيب حالة الستوك
-                $stock = DB::connection('oracle_sales')
-                    ->table('online_app_stock')
-                    ->where('product_id', $product->product_id)
-                    ->where('warehouse_id', $warehouseId)
-                    ->first();
+                $image = $images[$product->product_id] ?? null;
+                $stockRows = $stocks->get($product->product_id, collect());
 
                 return [
                     'image'      => $image ? asset('storage/' . $image) : null,
                     'product_id' => $product->product_id,
                     'name'       => $product->product_ename,
                     'price'      => round($product->pricelist_carton + $tax, 1),
-                    'status' => $stock ? ($stock->in_stock ? 'in stock' : 'out of stock') : 'in stock',
+                    'incentive_teaser' => $teasers[$product->product_id] ?? null,
+                    'status' => WarehouseIds::isAvailableInAnyWarehouse($stockRows, $warehouseIds) ? 'in stock' : 'out of stock',
                 ];
             });
 
@@ -101,6 +108,8 @@ class ProductServiceImpl implements ProductService
         }
 
         $tax = round(($price->pricelist_carton * ($price->tax_percentage / 100)) + $price->product_tax, 1);
+        $locale = request()->getPreferredLanguage(['ar', 'en']) ?? 'en';
+        $teaser = app(IncentiveService::class)->teasersForProducts(auth()->user(), [$product->product_id], $locale, true);
 
         $image = DB::connection('oracle_sales')
             ->table('online_app_images')
@@ -114,11 +123,12 @@ class ProductServiceImpl implements ProductService
             ->where('id', auth()->id())
             ->first();
 
-        $stock = DB::connection('oracle_sales')
+        $warehouseIds = WarehouseIds::fromUser($user);
+        $stockRows = DB::connection('oracle_sales')
             ->table('online_app_stock')
             ->where('product_id', $product_id)
-            ->where('warehouse_id', $user->warehouse_id)
-            ->first();
+            ->whereIn('warehouse_id', $warehouseIds)
+            ->get();
 
         return response()->json([
             'data' => [
@@ -127,8 +137,9 @@ class ProductServiceImpl implements ProductService
                 'code'     => $product->product_id,
                 'category' => $category->name,
                 'price'    => $price->pricelist_carton,
+                'incentive_teaser' => $teaser[$product->product_id] ?? null,
                 'tax'      => $tax,
-                'status' => $stock ? ($stock->in_stock ? 'in stock' : 'out of stock') : 'in stock',
+                'status' => WarehouseIds::isAvailableInAnyWarehouse($stockRows, $warehouseIds) ? 'in stock' : 'out of stock',
             ],
         ], 200);
     }
@@ -140,7 +151,7 @@ class ProductServiceImpl implements ProductService
             ->where('id', auth()->id())
             ->first();
 
-        $warehouseId = $user ? $user->warehouse_id : null;
+        $warehouseIds = $user ? WarehouseIds::fromUser($user) : [];
 
         // 2. جيب كل العروض المتاحة
         $offers = DB::connection('oracle_sales')
@@ -171,17 +182,33 @@ class ProductServiceImpl implements ProductService
 
         // 6. جيب المخزون لكل المنتجات دي في مخزن المستخدم الحالي دفعة واحدة
         $stocks = collect();
-        if ($warehouseId) {
+        if ($warehouseIds) {
             $stocks = DB::connection('oracle_sales')
                 ->table('online_app_stock')
                 ->whereIn('product_id', $productIds)
-                ->where('warehouse_id', $warehouseId)
+                ->whereIn('warehouse_id', $warehouseIds)
                 ->get()
-                ->keyBy('product_id');
+                ->groupBy('product_id');
         }
 
-        // 7. ادمج البيانات كلها بـ Loop سريعة في الميموري من غير كويريز زيادة
-        return $offers->map(function ($offer) use ($products, $images, $stocks) {
+        $prices = DB::connection('oracle_lmidc')
+            ->table('product_price_list')
+            ->whereIn('product_id', $productIds)
+            ->where('line_price_id', 1)
+            ->where('pricelist_carton', '>', 0)
+            ->get()
+            ->keyBy('product_id');
+
+        $validProductIds = $products->keys()
+            ->filter(fn ($productId) => $prices->has($productId))
+            ->values()->all();
+        $locale = request()->getPreferredLanguage(['ar', 'en']) ?? 'en';
+        $teasers = app(IncentiveService::class)->teasersForProducts(
+            auth()->user(), $validProductIds, $locale
+        );
+
+        // Build offer responses from the batched queries above (no per-offer SQL).
+        return $offers->map(function ($offer) use ($products, $images, $stocks, $prices, $teasers, $warehouseIds) {
             // ابحث عن المنتج في الميموري بدل الداتابيز
             $product = $products->get($offer->product_id);
 
@@ -191,13 +218,9 @@ class ProductServiceImpl implements ProductService
 
             // جيب الصورة والمخزون من الميموري
             $imagePath = $images->get($offer->product_id);
-            $stock = $stocks->get($offer->product_id);
+            $stockRows = $stocks->get($offer->product_id, collect());
 
-            $price = DB::connection('oracle_lmidc')
-                ->table('product_price_list')
-                ->where('product_id', $product->product_id)
-                ->where('line_price_id', 1)
-                ->first();
+            $price = $prices->get($product->product_id);
 
             if (!$price || $price->pricelist_carton === null || $price->pricelist_carton <= 0) {
                 return null;
@@ -209,7 +232,8 @@ class ProductServiceImpl implements ProductService
                 'product_id' => $product->product_id,
                 'name'       => $product->product_ename,
                 'price'      => round($price->pricelist_carton + $tax, 1),
-                'status'     => $stock ? ($stock->in_stock ? 'in stock' : 'out of stock') : 'in stock',
+                'incentive_teaser' => $teasers[$product->product_id] ?? null,
+                'status'     => WarehouseIds::isAvailableInAnyWarehouse($stockRows, $warehouseIds) ? 'in stock' : 'out of stock',
             ];
         })->filter()->values();
     }

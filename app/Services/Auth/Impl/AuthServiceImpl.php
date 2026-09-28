@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use App\Models\User;
 use App\Services\OTP\SMSService;
+use App\Support\WarehouseIds;
 
 class AuthServiceImpl implements AuthService
 {
@@ -93,10 +94,20 @@ class AuthServiceImpl implements AuthService
                 ->first();
 
             if ($ws) {
-                DB::connection('oracle_sales')
-                    ->table('online_app_users')
-                    ->where('id', $user->id)
-                    ->update(['warehouse_id' => $ws->warehouse_id]);
+                $warehouseIds = WarehouseIds::parse($ws->warehouse_id ?? null);
+
+                if (!$warehouseIds) {
+                    \Log::warning('No valid warehouse IDs returned for online user during login.', [
+                        'user_id' => $user->id,
+                    ]);
+                } else {
+                    DB::connection('oracle_sales')
+                        ->table('online_app_users')
+                        ->where('id', $user->id)
+                        ->update([
+                            'warehouse_id' => implode(',', $warehouseIds),
+                        ]);
+                }
             }
         }
 

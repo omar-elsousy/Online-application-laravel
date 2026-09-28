@@ -19,13 +19,16 @@ class CategoryServiceImpl implements CategoryService
             ->select('family_id', 'name')
             ->whereNotIn('family_id', $hiddenCategories)
             ->orderBy('family_id')
-            ->get()
-            ->map(function ($category) {
-                $image = DB::connection('oracle_sales')
-                    ->table('online_app_images')
-                    ->where('type', 'category')
-                    ->where('ref_id', $category->family_id)
-                    ->value('image_path');
+            ->get();
+
+        $images = $categories->isEmpty()
+            ? collect()
+            : DB::connection('oracle_sales')->table('online_app_images')
+                ->where('type', 'category')->whereIn('ref_id', $categories->pluck('family_id'))
+                ->pluck('image_path', 'ref_id');
+
+        $categories = $categories->map(function ($category) use ($images) {
+                $image = $images[$category->family_id] ?? null;
                 return [
                     'image'     => $image ? asset('storage/' . $image) : null,
                     'family_id' => $category->family_id,
@@ -49,13 +52,16 @@ class CategoryServiceImpl implements CategoryService
             ->table('product_company')
             ->select('company_id', 'company_name')
             ->whereNotIn('company_id', $hiddenCompanies)
-            ->get()
-            ->map(function ($company) {
-                $image = DB::connection('oracle_sales')
-                    ->table('online_app_images')
-                    ->where('type', 'company')
-                    ->where('ref_id', $company->company_id)
-                    ->value('image_path');
+            ->get();
+
+        $images = $companies->isEmpty()
+            ? collect()
+            : DB::connection('oracle_sales')->table('online_app_images')
+                ->where('type', 'company')->whereIn('ref_id', $companies->pluck('company_id'))
+                ->pluck('image_path', 'ref_id');
+
+        $companies = $companies->map(function ($company) use ($images) {
+                $image = $images[$company->company_id] ?? null;
                 return [
                     'image'      => $image ? asset('storage/' . $image) : null,
                     'company_id' => $company->company_id,
@@ -81,13 +87,16 @@ class CategoryServiceImpl implements CategoryService
             ->where('company_id', $company_id)
             ->whereNotIn('family_id', $hiddenCategories)
             ->orderBy('family_id')
-            ->get()
-            ->map(function ($category) {
-                $image = DB::connection('oracle_sales')
-                    ->table('online_app_images')
-                    ->where('type', 'category')
-                    ->where('ref_id', $category->family_id)
-                    ->value('image_path');
+            ->get();
+
+        $images = $categories->isEmpty()
+            ? collect()
+            : DB::connection('oracle_sales')->table('online_app_images')
+                ->where('type', 'category')->whereIn('ref_id', $categories->pluck('family_id'))
+                ->pluck('image_path', 'ref_id');
+
+        $categories = $categories->map(function ($category) use ($images) {
+                $image = $images[$category->family_id] ?? null;
                 return [
                     'image'     => $image ? asset('storage/' . $image) : null,
                     'family_id' => $category->family_id,

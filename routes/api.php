@@ -12,6 +12,7 @@ use App\Http\Controllers\Order\OrderController;
 use App\Http\Controllers\Favourite\FavouriteController;
 use App\Http\Controllers\Notification\NotificationController;
 use App\Http\Controllers\Points\PointsController;
+use App\Http\Controllers\Incentive\IncentiveController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -41,6 +42,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/getTarget', [TargetController::class, 'getTarget']);
     Route::post('/addToCart/{product_id}', [CartController::class, 'addToCart']);
     Route::get('/getCart', [CartController::class, 'getCart']);
+    Route::get('/incentives/cart-preview', [IncentiveController::class, 'cartPreview']);
+    Route::post('/incentives/cart-preview', [IncentiveController::class, 'cartPreview']);
+    Route::get('/wallet/available', [IncentiveController::class, 'availableWallet']);
     Route::post('/placeOrder', [OrderController::class, 'placeOrder']);
     Route::get('/getOrders', [OrderController::class, 'getOrders']);
     Route::get('/getOrderDetails/{order_id}', [OrderController::class, 'getOrderDetails']);
