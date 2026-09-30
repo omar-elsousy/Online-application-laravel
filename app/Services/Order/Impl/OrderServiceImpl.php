@@ -87,7 +87,7 @@ class OrderServiceImpl implements OrderService
             return [
                 'product_id' => $line['product_id'], 'quantity' => $line['quantity'],
                 'unit_price' => $line['unit_price'], 'unit_tax' => $line['tax'],
-                'unit_price_after_tax' => $line['total'] / max(1, $line['quantity']),
+                'unit_price_after_tax' => $line['total'] / max(0.000001, (float) $line['quantity']),
                 'total_price' => $line['total'], 'discount_applied' => $line['discount'],
                 'is_gift' => !empty($line['is_gift']) ? 1 : 0,
                 'source_incentive_id' => $line['source_incentive_id'] ?? null,

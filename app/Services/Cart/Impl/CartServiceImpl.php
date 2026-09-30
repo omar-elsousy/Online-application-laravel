@@ -12,7 +12,7 @@ class CartServiceImpl implements CartService
     public function addToCart(Request $request, $product_id)
     {
         $request->validate([
-            'quantity' => 'required|numeric|min:1',
+            'quantity' => 'required|numeric|gt:0',
         ]);
 
         $user_id = $request->user()->id;

@@ -167,7 +167,7 @@ class IncentiveService
             if (!$price || $price->pricelist_carton <= 0) return null;
             return [
                 'product_id' => (string) $cartItem->product_id,
-                'quantity' => (int) $cartItem->quantity,
+                'quantity' => (float) $cartItem->quantity,
                 'unit_price' => round($price->pricelist_carton, 2),
                 'line_price' => round($price->pricelist_carton * $cartItem->quantity, 2),
                 'tax_percentage' => (float) ($price->tax_percentage ?? 0),
@@ -195,25 +195,24 @@ class IncentiveService
                 $taxProducts = array_map('trim', explode(',', (string) $rule->tax_prods));
                 if (!in_array((string) $line['product_id'], $taxProducts, true)) continue;
                 if ((int) $rule->repeated === 0 && in_array($rule->incentive_id, $used)) continue;
-                if ($line['quantity'] < $rule->from_sales_val || $line['quantity'] > $rule->to_sales_val || (int) $rule->qty <= 0) continue;
-                $multiplier = intdiv($line['quantity'], (int) $rule->qty);
-                if ($multiplier < 1) continue;
+                $calculation = MixRuleCalculator::evaluate($line, $rule);
+                if ($calculation === null) continue;
 
                 if ((int) $rule->gift_product_id !== 0) {
                     if (in_array((int) $rule->incentive_id, $removedGiftIncentives, true)) continue;
                     $result['applied_ids'][] = (int) $rule->incentive_id;
                     $result['banners'][$line['product_id']] = trim(($result['banners'][$line['product_id']] ?? '') . ' • ' . ($locale === 'ar' ? 'هدية' : 'Gift'), ' •');
-                    $result['gifts'][] = ['product_id' => $rule->gift_product_id, 'quantity' => $multiplier * (int) $rule->val, 'incentive_id' => $rule->incentive_id];
+                    $result['gifts'][] = ['product_id' => $rule->gift_product_id, 'quantity' => $calculation['multiplier'] * (int) $rule->val, 'incentive_id' => $rule->incentive_id];
                 } elseif ((float) $rule->discount_perc !== 0.0) {
                     $result['applied_ids'][] = (int) $rule->incentive_id;
                     $label = $locale === 'ar' ? 'خصم ' . $rule->discount_perc . '%' : 'Discount ' . $rule->discount_perc . '%';
                     $result['banners'][$line['product_id']] = trim(($result['banners'][$line['product_id']] ?? '') . ' • ' . $label, ' •');
-                    $result['discounts'][$line['product_id']] = ($result['discounts'][$line['product_id']] ?? 0) + ($line['unit_price'] * $rule->discount_perc / 100 * $multiplier);
+                    $result['discounts'][$line['product_id']] = ($result['discounts'][$line['product_id']] ?? 0) + $calculation['discount'];
                 } else {
                     $result['applied_ids'][] = (int) $rule->incentive_id;
                     $label = $locale === 'ar' ? 'خصم ' . $rule->val . ' ج.م' : $rule->val . ' EGP off';
                     $result['banners'][$line['product_id']] = trim(($result['banners'][$line['product_id']] ?? '') . ' • ' . $label, ' •');
-                    $result['discounts'][$line['product_id']] = ($result['discounts'][$line['product_id']] ?? 0) + ($multiplier * (float) $rule->val);
+                    $result['discounts'][$line['product_id']] = ($result['discounts'][$line['product_id']] ?? 0) + $calculation['discount'];
                 }
             }
         }

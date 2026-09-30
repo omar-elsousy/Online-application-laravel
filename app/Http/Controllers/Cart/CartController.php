@@ -32,7 +32,7 @@ class CartController extends Controller
      *         required=true,
      *         @OA\JsonContent(
      *             required={"quantity"},
-     *             @OA\Property(property="quantity", type="integer", minimum=1, example=2)
+     *             @OA\Property(property="quantity", type="number", minimum=0.01, example=0.5)
      *         )
      *     ),
      *     @OA\Response(
@@ -78,7 +78,7 @@ class CartController extends Controller
      *                         @OA\Property(property="image", type="string", nullable=true, example="http://example.com/storage/products/img.jpg"),
      *                         @OA\Property(property="product_id", type="integer", example=101),
      *                         @OA\Property(property="name", type="string", example="منتج A"),
-     *                         @OA\Property(property="quantity", type="integer", example=2),
+     *                         @OA\Property(property="quantity", type="number", example=0.5),
      *                         @OA\Property(property="unit_price", type="number", example=50.0),
      *                         @OA\Property(property="unit_tax", type="number", example=7.5),
      *                         @OA\Property(property="unit_price_after_tax", type="number", example=57.5),
