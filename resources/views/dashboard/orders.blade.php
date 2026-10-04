@@ -16,6 +16,7 @@
                 <tr>
                     <th>رقم الأوردر</th>
                     <th>رقم العميل</th>
+                    <th>كود العميل</th>
                     <th>السعر الكلي</th>
                     <th>الحالة</th>
                     <th>التاريخ</th>
@@ -27,6 +28,7 @@
                 <tr>
                     <td>{{ $order->id }}</td>
                     <td>{{ $order->user_id }}</td>
+                    <td>{{ $order->pos_code ?? 'قديم / غير محدد' }}</td>
                     <td>{{ number_format($order->total_price, 1) }}</td>
                     <td>
                         @if($order->status == 'placed')

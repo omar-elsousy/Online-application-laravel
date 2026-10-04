@@ -5,16 +5,20 @@ namespace App\Services\Favourite\Impl;
 use App\Services\Favourite\FavouriteService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\ActivePosCode;
 
 class FavouriteServiceImpl implements FavouriteService
 {
     public function addToFavourites(Request $request, $product_id)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $exists = DB::connection('oracle_sales')
                         ->table('favourites_online_app')
                         ->where('user_id', $user_id)
+                        ->where('pos_code', $posCode)
                         ->where('product_id', $product_id)
                         ->first();
 
@@ -28,6 +32,7 @@ class FavouriteServiceImpl implements FavouriteService
             ->table('favourites_online_app')
             ->insert([
                 'user_id'    => $user_id,
+                'pos_code'   => $posCode,
                 'product_id' => $product_id,
                 'created_at' => now(),
             ]);
@@ -40,10 +45,13 @@ class FavouriteServiceImpl implements FavouriteService
     public function getFavourites(Request $request)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $favourites = DB::connection('oracle_sales')
                         ->table('favourites_online_app')
                         ->where('user_id', $user_id)
+                        ->where('pos_code', $posCode)
                         ->get()
                         ->map(function($fav) {
                             $product = DB::connection('oracle_lmidc')
@@ -86,10 +94,13 @@ class FavouriteServiceImpl implements FavouriteService
     public function removeFromFavourites(Request $request, $product_id)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         DB::connection('oracle_sales')
             ->table('favourites_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->where('product_id', $product_id)
             ->delete();
 

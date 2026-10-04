@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Kreait\Firebase\Contract\Messaging;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
+use App\Support\ActivePosCode;
 
 class NotificationServiceImpl implements NotificationService
 {
@@ -49,27 +50,42 @@ class NotificationServiceImpl implements NotificationService
     public function notifications(Request $request)
     {
         $perPage = min(max((int) $request->input('per_page', 20), 1), 100);
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         return response()->json(DB::connection('oracle_sales')
             ->table('online_app_notifications')
             ->where('user_id', $request->user()->id)
+            ->where(function ($query) use ($posCode) {
+                $query->where('pos_code', $posCode)->orWhereNull('pos_code');
+            })
             ->orderByDesc('created_at')
             ->paginate($perPage));
     }
 
     public function unreadCount(Request $request)
     {
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
         return response()->json(['count' => DB::connection('oracle_sales')
             ->table('online_app_notifications')
             ->where('user_id', $request->user()->id)
+            ->where(function ($query) use ($posCode) {
+                $query->where('pos_code', $posCode)->orWhereNull('pos_code');
+            })
             ->where('is_read', 0)
             ->count()]);
     }
 
     public function markAsRead(Request $request, int $notificationId)
     {
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
         $updated = DB::connection('oracle_sales')->table('online_app_notifications')
             ->where('id', $notificationId)->where('user_id', $request->user()->id)
+            ->where(function ($query) use ($posCode) {
+                $query->where('pos_code', $posCode)->orWhereNull('pos_code');
+            })
             ->where('is_read', 0)->update(['is_read' => 1]);
 
         return response()->json(['updated' => $updated]);
@@ -77,26 +93,33 @@ class NotificationServiceImpl implements NotificationService
 
     public function markAllAsRead(Request $request)
     {
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
         $updated = DB::connection('oracle_sales')->table('online_app_notifications')
-            ->where('user_id', $request->user()->id)->where('is_read', 0)
+            ->where('user_id', $request->user()->id)
+            ->where(function ($query) use ($posCode) {
+                $query->where('pos_code', $posCode)->orWhereNull('pos_code');
+            })
+            ->where('is_read', 0)
             ->update(['is_read' => 1]);
 
         return response()->json(['updated' => $updated]);
     }
 
-    public function saveNotification(int $userId, string $title, string $body)
+    public function saveNotification(int $userId, string $title, string $body, ?string $posCode = null)
     {
         DB::connection('oracle_sales')->table('online_app_notifications')->insert([
             'user_id' => $userId,
+            'pos_code' => $posCode,
             'title' => $title,
             'body' => $body,
             'is_read' => 0,
             'created_at' => now(),
         ]);
     }
-    public function sendNotification(int $userId, string $title, string $body)
+    public function sendNotification(int $userId, string $title, string $body, ?string $posCode = null)
     {
-        $this->saveNotification($userId, $title, $body);
+        $this->saveNotification($userId, $title, $body, $posCode);
         $tokens = DB::connection('oracle_sales')
                     ->table('online_app_device_tokens')
                     ->where('user_id', $userId)

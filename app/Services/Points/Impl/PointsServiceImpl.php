@@ -5,19 +5,17 @@ namespace App\Services\Points\Impl;
 use App\Services\Points\PointsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\ActivePosCode;
+use App\Support\PosPoints;
 
 class PointsServiceImpl implements PointsService
 {
     public function getSummary(Request $request)
     {
         $userId = $request->user()->id;
-
-        $user = DB::connection('oracle_sales')
-            ->table('online_app_users')
-            ->where('id', $userId)
-            ->first();
-
-        $points = $user ? (int)($user->points ?? 0) : 0;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
+        $points = PosPoints::balance($userId, $posCode);
 
         // إعدادات التصفير والسياسة
         $settingsRaw = DB::connection('oracle_sales')
@@ -69,13 +67,9 @@ class PointsServiceImpl implements PointsService
     public function getGifts(Request $request)
     {
         $userId = $request->user()->id;
-
-        $user = DB::connection('oracle_sales')
-            ->table('online_app_users')
-            ->where('id', $userId)
-            ->first();
-
-        $userPoints = $user ? (int)($user->points ?? 0) : 0;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
+        $userPoints = PosPoints::balance($userId, $posCode);
 
         $gifts = DB::connection('oracle_sales')
             ->table('online_app_points_gifts')
@@ -102,6 +96,8 @@ class PointsServiceImpl implements PointsService
     public function redeemGift(Request $request, $gift_id)
     {
         $userId = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $gift = DB::connection('oracle_sales')
             ->table('online_app_points_gifts')
@@ -115,12 +111,7 @@ class PointsServiceImpl implements PointsService
             ], 404);
         }
 
-        $user = DB::connection('oracle_sales')
-            ->table('online_app_users')
-            ->where('id', $userId)
-            ->first();
-
-        $userPoints = $user ? (int)($user->points ?? 0) : 0;
+        $userPoints = PosPoints::balance($userId, $posCode);
 
         if ($userPoints < (int)$gift->points_required) {
             return response()->json([
@@ -128,17 +119,17 @@ class PointsServiceImpl implements PointsService
             ], 400);
         }
 
-        // خصم النقاط
-        DB::connection('oracle_sales')
-            ->table('online_app_users')
-            ->where('id', $userId)
-            ->decrement('points', $gift->points_required);
+        // Deduct atomically from this POS only.
+        if (!PosPoints::deduct($userId, $posCode, (int) $gift->points_required)) {
+            return response()->json(['message' => 'عفواً، رصيد نقاطك غير كافٍ لاستبدال هذه الهدية'], 400);
+        }
 
         // إنشاء طلب استبدال
         $redemptionId = DB::connection('oracle_sales')
             ->table('online_app_points_redemptions')
             ->insertGetId([
                 'user_id'      => $userId,
+                'pos_code'     => $posCode,
                 'gift_id'      => $gift->id,
                 'points_spent' => $gift->points_required,
                 'status'       => 'pending',
@@ -151,6 +142,7 @@ class PointsServiceImpl implements PointsService
             ->table('online_app_points_history')
             ->insert([
                 'user_id'     => $userId,
+                'pos_code'    => $posCode,
                 'order_id'    => null,
                 'gift_id'     => $gift->id,
                 'points'      => -$gift->points_required,
@@ -165,7 +157,8 @@ class PointsServiceImpl implements PointsService
             $notificationService->sendNotification(
                 $userId,
                 'طلب استبدال هدية 🎁',
-                "تم تسجيل طلب استبدال ({$gift->title}) بنجاح وجاري مراجعته من الإدارة."
+                "تم تسجيل طلب استبدال ({$gift->title}) بنجاح وجاري مراجعته من الإدارة.",
+                $posCode
             );
         } catch (\Throwable $e) {}
 
@@ -181,10 +174,13 @@ class PointsServiceImpl implements PointsService
     public function getHistory(Request $request)
     {
         $userId = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $history = DB::connection('oracle_sales')
             ->table('online_app_points_history')
             ->where('user_id', $userId)
+            ->where('pos_code', $posCode)
             ->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($item) {

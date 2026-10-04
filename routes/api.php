@@ -29,7 +29,6 @@ use App\Http\Controllers\Incentive\IncentiveController;
 // });
 
 Route::post('/register', [AuthController::class, 'register']);
-Route::post('/register/customers', [AuthController::class, 'registrationCustomers'])->middleware('throttle:10,1');
 Route::post('/login',    [AuthController::class, 'login']);
 Route::post('/sendOtp', [AuthController::class, 'sendOtp']);
 Route::post('/resetPassword', [AuthController::class, 'resetPassword']);

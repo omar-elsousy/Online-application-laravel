@@ -5,6 +5,8 @@ namespace App\Services\Dashboard\Order\Impl;
 use App\Services\Dashboard\Order\OrderService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\PosPoints;
+use App\Services\Incentive\IncentiveService;
 
 class OrderServiceImpl implements OrderService
 {
@@ -75,24 +77,29 @@ class OrderServiceImpl implements OrderService
             ->where('id', $order_id)
             ->update(['status' => 6]);
 
+        if (!empty($order->pos_code)) {
+            app(IncentiveService::class)->releaseForOrder((object) [], (int) $order_id, $order->pos_code);
+        }
+
         try {
             $earnedPoints = DB::connection('oracle_sales')
                 ->table('online_app_points_history')
                 ->where('order_id', $order_id)
                 ->where('user_id', $order->user_id)
+                ->where('pos_code', $order->pos_code)
                 ->where('type', 'earned_order')
                 ->sum('points');
 
             if ($earnedPoints > 0) {
-                DB::connection('oracle_sales')
-                    ->table('online_app_users')
-                    ->where('id', $order->user_id)
-                    ->decrement('points', $earnedPoints);
+                if ($order->pos_code) {
+                    PosPoints::change((int) $order->user_id, $order->pos_code, -$earnedPoints);
+                }
 
                 DB::connection('oracle_sales')
                     ->table('online_app_points_history')
                     ->insert([
                         'user_id'     => $order->user_id,
+                        'pos_code'    => $order->pos_code,
                         'order_id'    => $order_id,
                         'gift_id'     => null,
                         'points'      => -$earnedPoints,

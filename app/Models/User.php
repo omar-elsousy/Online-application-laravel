@@ -21,4 +21,18 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
     ];
+
+    public function tokenContextValue(string $key): ?string
+    {
+        $token = $this->currentAccessToken();
+        $prefix = $key . ':';
+
+        foreach (($token?->abilities ?? []) as $ability) {
+            if (is_string($ability) && str_starts_with($ability, $prefix)) {
+                return substr($ability, strlen($prefix));
+            }
+        }
+
+        return null;
+    }
 }

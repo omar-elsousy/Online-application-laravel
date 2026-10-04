@@ -11,7 +11,7 @@ interface NotificationService
     public function unreadCount(Request $request);
     public function markAsRead(Request $request, int $notificationId);
     public function markAllAsRead(Request $request);
-    public function saveNotification(int $userId, string $title, string $body);
-    public function sendNotification(int $userId, string $title, string $body);
+    public function saveNotification(int $userId, string $title, string $body, ?string $posCode = null);
+    public function sendNotification(int $userId, string $title, string $body, ?string $posCode = null);
 }
 

@@ -6,6 +6,7 @@ use App\Services\Cart\CartService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Support\WarehouseIds;
+use App\Support\ActivePosCode;
 
 class CartServiceImpl implements CartService
 {
@@ -16,6 +17,10 @@ class CartServiceImpl implements CartService
         ]);
 
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) {
+            return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
+        }
 
         $product = DB::connection('oracle_lmidc')
             ->table('to_sfa_products_android')
@@ -59,6 +64,7 @@ class CartServiceImpl implements CartService
         $cartItem = DB::connection('oracle_sales')
             ->table('cart_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->where('product_id', $product_id)
             ->first();
 
@@ -66,6 +72,7 @@ class CartServiceImpl implements CartService
             DB::connection('oracle_sales')
                 ->table('cart_online_app')
                 ->where('user_id', $user_id)
+                ->where('pos_code', $posCode)
                 ->where('product_id', $product_id)
                 ->update([
                     'quantity' => $cartItem->quantity + $request->quantity,
@@ -75,6 +82,7 @@ class CartServiceImpl implements CartService
                 ->table('cart_online_app')
                 ->insert([
                     'user_id'    => $user_id,
+                    'pos_code'   => $posCode,
                     'product_id' => $product_id,
                     'quantity'   => $request->quantity,
                     'created_at' => now(),
@@ -89,10 +97,15 @@ class CartServiceImpl implements CartService
     public function getCart(Request $request)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) {
+            return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
+        }
 
         $cartItems = DB::connection('oracle_sales')
             ->table('cart_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->get();
 
         if ($cartItems->isEmpty()) {
@@ -158,6 +171,8 @@ class CartServiceImpl implements CartService
         if ($invalidCartIds) {
             DB::connection('oracle_sales')
                 ->table('cart_online_app')
+                ->where('user_id', $user_id)
+                ->where('pos_code', $posCode)
                 ->whereIn('id', $invalidCartIds)
                 ->delete();
         }
@@ -178,10 +193,15 @@ class CartServiceImpl implements CartService
     public function removeFromCart(Request $request, $product_id)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) {
+            return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
+        }
 
         $cartItem = DB::connection('oracle_sales')
             ->table('cart_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->where('product_id', $product_id)
             ->first();
 
@@ -194,6 +214,7 @@ class CartServiceImpl implements CartService
         DB::connection('oracle_sales')
             ->table('cart_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->where('product_id', $product_id)
             ->delete();
 

@@ -389,6 +389,7 @@
                                 <tr>
                                     <th>رقم الطلب</th>
                                     <th>موبايل العميل</th>
+                                    <th>كود العميل</th>
                                     <th>الهدية المطلوبة</th>
                                     <th>النقاط المخصومة</th>
                                     <th>تاريخ الطلب</th>
@@ -403,6 +404,7 @@
                                     <td>
                                         <i class="fas fa-phone-alt text-muted me-1"></i> {{ $r->user_mobile ?? 'عميل #'.$r->user_id }}
                                     </td>
+                                    <td>{{ $r->pos_code ?? 'قديم / غير محدد' }}</td>
                                     <td>
                                         @if($r->gift_image)
                                             <img src="{{ asset('storage/' . $r->gift_image) }}" class="rounded me-1" style="width: 30px; height: 30px; object-fit: cover;" onerror="this.onerror=null; this.style.display='none';">
@@ -437,11 +439,12 @@
                                                 <form method="POST" action="{{ asset('dashboard/points/updateRedemptionStatus/' . $r->id) }}">
                                                     @csrf
                                                     <input type="hidden" name="status" value="rejected">
-                                                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('رفض الطلب وإعادة {{ $r->points_spent }} نقطة لحساب العميل؟')">
+                                                    <button type="submit" class="btn btn-sm btn-danger" @disabled(empty($r->pos_code)) onclick="return confirm('رفض الطلب وإعادة {{ $r->points_spent }} نقطة لكود العميل {{ $r->pos_code }}؟')">
                                                         <i class="fas fa-times me-1"></i> رفض
                                                     </button>
                                                 </form>
                                             </div>
+                                            @if(empty($r->pos_code))<small class="text-danger d-block mt-1">لا يمكن رد النقاط لعدم تسجيل كود العميل في الطلب القديم.</small>@endif
                                         @else
                                             <span class="text-muted small">مكتمل</span>
                                         @endif

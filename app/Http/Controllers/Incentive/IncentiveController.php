@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\Incentive\IncentiveService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\ActivePosCode;
 
 class IncentiveController extends Controller
 {
@@ -13,7 +14,12 @@ class IncentiveController extends Controller
 
     public function cartPreview(Request $request)
     {
-        $cartItems = DB::connection('oracle_sales')->table('cart_online_app')->where('user_id', $request->user()->id)->get();
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
+        $cartItems = DB::connection('oracle_sales')->table('cart_online_app')
+            ->where('user_id', $request->user()->id)
+            ->where('pos_code', $posCode)
+            ->get();
         $requested = collect($request->input('wallet_credits', []));
         $cartProductIds = $cartItems->pluck('product_id')->all();
         $credits = $this->incentives->availableWallet($request->user(), $cartProductIds)->filter(function ($credit) use ($requested) {

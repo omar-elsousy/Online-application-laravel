@@ -6,6 +6,7 @@ use App\Services\Dashboard\Points\PointsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use App\Support\PosPoints;
 
 class PointsServiceImpl implements PointsService
 {
@@ -169,6 +170,21 @@ class PointsServiceImpl implements PointsService
 
     public function resetAllPoints(Request $request)
     {
+        $posBalances = DB::connection('oracle_sales')->table('online_app_pos_points')->where('points', '>', 0)->get();
+        foreach ($posBalances as $balance) {
+            DB::connection('oracle_sales')->table('online_app_points_history')->insert([
+                'user_id' => $balance->user_id,
+                'pos_code' => $balance->pos_code,
+                'order_id' => null,
+                'gift_id' => null,
+                'points' => -(int) $balance->points,
+                'type' => 'expired',
+                'description' => 'تصفير نقاط العميل لانتهاء الدورة الزمنية',
+                'created_at' => now(),
+            ]);
+        }
+        DB::connection('oracle_sales')->table('online_app_pos_points')->update(['points' => 0, 'updated_at' => now()]);
+
         // تصفير النقاط لجميع المستخدمين وتسجيل العملية في السجل
         $usersWithPoints = DB::connection('oracle_sales')
             ->table('online_app_users')
@@ -301,15 +317,17 @@ class PointsServiceImpl implements PointsService
 
         // إذا تم رفض الطلب، نرد النقاط للمستخدم
         if ($request->status === 'rejected') {
-            DB::connection('oracle_sales')
-                ->table('online_app_users')
-                ->where('id', $redemption->user_id)
-                ->increment('points', $redemption->points_spent);
+            if (empty($redemption->pos_code)) {
+                return redirect(asset('dashboard/points'))->with('error', 'هذا الطلب قديم ولم يُسجّل معه كود العميل؛ لم يتم رفضه أو رد النقاط لتجنب إضافتها للعميل الخطأ.');
+            }
+
+            PosPoints::change((int) $redemption->user_id, $redemption->pos_code, (int) $redemption->points_spent);
 
             DB::connection('oracle_sales')
                 ->table('online_app_points_history')
                 ->insert([
                     'user_id'     => $redemption->user_id,
+                    'pos_code'    => $redemption->pos_code,
                     'gift_id'     => $redemption->gift_id,
                     'points'      => $redemption->points_spent,
                     'type'        => 'admin_adjustment',

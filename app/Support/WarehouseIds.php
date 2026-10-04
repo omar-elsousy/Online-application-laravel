@@ -34,6 +34,21 @@ class WarehouseIds
     /** Read the new list column, falling back to the legacy single-ID column. */
     public static function fromUser($user): array
     {
+        $contextUser = method_exists($user, 'tokenContextValue') ? $user : null;
+        if (!$contextUser) {
+            try {
+                $contextUser = auth()->user();
+            } catch (\Throwable $exception) {
+                $contextUser = null;
+            }
+        }
+        if ($contextUser && method_exists($contextUser, 'tokenContextValue')) {
+            $tokenWarehouseIds = $contextUser->tokenContextValue('warehouse_ids');
+            if ($tokenWarehouseIds !== null) {
+                return self::parse($tokenWarehouseIds);
+            }
+        }
+
         $ids = self::parse(data_get($user, 'warehouse_ids'));
 
         return $ids ?: self::parse(data_get($user, 'warehouse_id'));

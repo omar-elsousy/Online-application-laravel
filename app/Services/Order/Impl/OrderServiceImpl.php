@@ -7,16 +7,21 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\Incentive\IncentiveService;
 use App\Support\WarehouseIds;
+use App\Support\ActivePosCode;
+use App\Support\PosPoints;
 
 class OrderServiceImpl implements OrderService
 {
     public function placeOrder(Request $request)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $cartItems = DB::connection('oracle_sales')
             ->table('cart_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->get();
 
         if ($cartItems->isEmpty()) {
@@ -29,6 +34,7 @@ class OrderServiceImpl implements OrderService
         $activeOrder = DB::connection('oracle_sales')
             ->table('orders_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->whereIn('status', [1, 2])
             ->first();
 
@@ -47,7 +53,7 @@ class OrderServiceImpl implements OrderService
 
         $incentives = app(IncentiveService::class);
         $requestedCredits = collect($request->input('wallet_credits', []));
-        $availableCredits = $incentives->availableWallet($user, $cartItems->pluck('product_id')->all());
+        $availableCredits = $incentives->availableWallet($request->user(), $cartItems->pluck('product_id')->all());
         $walletCredits = $availableCredits->filter(function ($credit) use ($requestedCredits) {
             return $requestedCredits->contains(function ($requested) use ($credit) {
                 return (int) ($requested['incentive_type_id'] ?? 0) === (int) $credit->incentive_type_id
@@ -58,7 +64,7 @@ class OrderServiceImpl implements OrderService
         if ($walletCredits->count() !== $requestedCredits->count()) {
             return response()->json(['message' => 'رصيد المحفظة المختار غير متاح حالياً'], 422);
         }
-        $preview = $incentives->previewForUser($user, $cartItems, $walletCredits->all(), $request->input('removed_gift_incentive_ids', []));
+        $preview = $incentives->previewForUser($request->user(), $cartItems, $walletCredits->all(), $request->input('removed_gift_incentive_ids', []));
         if ($walletCredits->isNotEmpty() && $preview['totals']['wallet_used'] <= 0) {
             return response()->json(['message' => 'إجمالي الطلب يجب أن يكون أكبر من رصيد المحفظة المستخدم'], 422);
         }
@@ -95,10 +101,12 @@ class OrderServiceImpl implements OrderService
         })->all();
 
         $order_id = DB::connection('oracle_sales')->table('orders_online_app')->insertGetId([
-            'user_id' => $user_id, 'total_price' => round($total_price, 2), 'status' => 1, 'created_at' => now(),
+            'user_id' => $user_id,
+            'pos_code' => $posCode,
+            'total_price' => round($total_price, 2), 'status' => 1, 'created_at' => now(),
         ]);
         try {
-            $incentives->redeemForOrder($user, $order_id, $preview, $walletCredits);
+            $incentives->redeemForOrder($request->user(), $order_id, $preview, $walletCredits);
         } catch (\Throwable $e) {
             DB::connection('oracle_sales')->table('orders_online_app')->where('id', $order_id)->update(['status' => 6]);
             return response()->json(['message' => 'تعذر استخدام الحافز أو رصيد المحفظة، حاول مرة أخرى'], 409);
@@ -113,6 +121,7 @@ class OrderServiceImpl implements OrderService
         DB::connection('oracle_sales')
             ->table('cart_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->delete();
 
         // احتساب النقاط بناءً على قواعد الأقسام
@@ -159,15 +168,13 @@ class OrderServiceImpl implements OrderService
                 }
 
                 if ($earnedPoints > 0) {
-                    DB::connection('oracle_sales')
-                        ->table('online_app_users')
-                        ->where('id', $user_id)
-                        ->increment('points', $earnedPoints);
+                    PosPoints::change($user_id, $posCode, $earnedPoints);
 
                     DB::connection('oracle_sales')
                         ->table('online_app_points_history')
                         ->insert([
                             'user_id'     => $user_id,
+                            'pos_code'    => $posCode,
                             'order_id'    => $order_id,
                             'gift_id'     => null,
                             'points'      => $earnedPoints,
@@ -190,7 +197,8 @@ class OrderServiceImpl implements OrderService
         $notificationService->sendNotification(
             $user_id,
             'تم تأكيد طلبك ✅',
-            $notifBody
+            $notifBody,
+            $posCode
         );
 
         return response()->json([
@@ -203,10 +211,13 @@ class OrderServiceImpl implements OrderService
     public function getOrders(Request $request)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $orders = DB::connection('oracle_sales')
             ->table('orders_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($order) {
@@ -232,11 +243,14 @@ class OrderServiceImpl implements OrderService
     public function getOrderDetails(Request $request, $order_id)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $order = DB::connection('oracle_sales')
             ->table('orders_online_app')
             ->where('id', $order_id)
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->first();
 
         if (!$order) {
@@ -317,10 +331,13 @@ class OrderServiceImpl implements OrderService
     public function getUserOrdersHistory(Request $request)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $orders = DB::connection('oracle_sales')
             ->table('orders_online_app')
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($order) {
@@ -378,11 +395,14 @@ class OrderServiceImpl implements OrderService
     public function cancelOrder(Request $request, $order_id)
     {
         $user_id = $request->user()->id;
+        $posCode = ActivePosCode::forUser($request->user());
+        if (!$posCode) return response()->json(['message' => 'تعذر تحديد العميل النشط. سجّل الدخول مرة أخرى.'], 409);
 
         $order = DB::connection('oracle_sales')
             ->table('orders_online_app')
             ->where('id', $order_id)
             ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->first();
 
         if (!$order) {
@@ -400,9 +420,11 @@ class OrderServiceImpl implements OrderService
         DB::connection('oracle_sales')
             ->table('orders_online_app')
             ->where('id', $order_id)
+            ->where('user_id', $user_id)
+            ->where('pos_code', $posCode)
             ->update(['status' => 6]);
 
-        app(IncentiveService::class)->releaseForOrder($request->user(), $order_id);
+        app(IncentiveService::class)->releaseForOrder($request->user(), $order_id, $posCode);
 
         // استرجاع وخصم النقاط المكتسبة من هذا الطلب إن وجدت
         try {
@@ -410,19 +432,18 @@ class OrderServiceImpl implements OrderService
                 ->table('online_app_points_history')
                 ->where('order_id', $order_id)
                 ->where('user_id', $user_id)
+                ->where('pos_code', $posCode)
                 ->where('type', 'earned_order')
                 ->sum('points');
 
             if ($earnedPoints > 0) {
-                DB::connection('oracle_sales')
-                    ->table('online_app_users')
-                    ->where('id', $user_id)
-                    ->decrement('points', $earnedPoints);
+                PosPoints::change($user_id, $posCode, -$earnedPoints);
 
                 DB::connection('oracle_sales')
                     ->table('online_app_points_history')
                     ->insert([
                         'user_id'     => $user_id,
+                        'pos_code'    => $posCode,
                         'order_id'    => $order_id,
                         'gift_id'     => null,
                         'points'      => -$earnedPoints,
@@ -440,7 +461,8 @@ class OrderServiceImpl implements OrderService
         $notificationService->sendNotification(
             $user_id,
             'تم إلغاء طلبك ❌',
-            'تم إلغاء طلبك بنجاح'
+            'تم إلغاء طلبك بنجاح',
+            $posCode
         );
 
         return response()->json([

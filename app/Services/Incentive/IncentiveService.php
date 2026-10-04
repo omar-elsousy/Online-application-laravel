@@ -4,18 +4,13 @@ namespace App\Services\Incentive;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use App\Support\ActivePosCode;
 
 class IncentiveService
 {
     public function posCodeForUser(object $user): ?string
     {
-        $selectedPosCode = trim((string) ($user->selected_pos_code ?? ''));
-        if (preg_match('/^\d+_\d+$/', $selectedPosCode)) {
-            return $selectedPosCode;
-        }
-
-        $pos = DB::connection('oracle_lmidc')->table('pos')->where('mobile', $user->mobile)->first();
-        return $pos ? $pos->ter_id . '_' . $pos->pos_id : null;
+        return ActivePosCode::forUser($user);
     }
 
     public function previewForUser(object $user, Collection $cartItems, array $walletCredits = [], array $removedGiftIncentives = [], string $locale = 'en'): array
@@ -105,6 +100,7 @@ class IncentiveService
 
         $cartProductIds ??= DB::connection('oracle_sales')->table('cart_online_app')
             ->where('user_id', $user->id)
+            ->where('pos_code', $posCode)
             ->pluck('product_id')
             ->all();
         $cartProductIds = collect($cartProductIds)
@@ -268,9 +264,9 @@ class IncentiveService
         });
     }
 
-    public function releaseForOrder(object $user, int $orderId): void
+    public function releaseForOrder(object $user, int $orderId, ?string $orderPosCode = null): void
     {
-        $posCode = $this->posCodeForUser($user);
+        $posCode = $orderPosCode ?: $this->posCodeForUser($user);
         if (!$posCode) return;
         [$terId, $posId] = explode('_', $posCode, 2);
         DB::connection('oracle_lmidc')->transaction(function () use ($posCode, $terId, $posId, $orderId) {
