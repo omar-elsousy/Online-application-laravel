@@ -5,20 +5,14 @@ namespace App\Services\Target\Impl;
 use App\Services\Target\TargetService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\Incentive\IncentiveService;
 
 class TargetServiceImpl implements TargetService
 {
     public function getTarget(Request $request)
     {
-        // جيب الموبايل بتاع اليوزر الحالي
-        $mobile = $request->user()->mobile;
-        // جيب الـ pos_code من جدول pos
-        $pos = DB::connection('oracle_lmidc')
-                    ->table('pos')
-                    ->where('mobile', $mobile)
-                    ->first();
-
-        if (!$pos) {
+        $posCode = app(IncentiveService::class)->posCodeForUser($request->user());
+        if (!$posCode) {
             return response()->json([
                 'message' => 'العميل مش موجود',
             ], 404);
@@ -33,7 +27,7 @@ class TargetServiceImpl implements TargetService
                     ->table('target_retail_pos')
                     ->where('year', $year)
                     ->where('month', $month)
-                    ->whereRaw("ter_id || '_' || pos_id = ?", [$pos->ter_id . '_' . $pos->pos_id])
+                    ->whereRaw("ter_id || '_' || pos_id = ?", [$posCode])
                     ->select('achieved', 'target_sales')
                     ->first();
 

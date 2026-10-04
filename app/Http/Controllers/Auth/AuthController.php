@@ -50,6 +50,11 @@ class AuthController extends Controller
         return $this->authService->register($request);
     }
 
+    public function registrationCustomers(Request $request)
+    {
+        return $this->authService->registrationCustomers($request);
+    }
+
     /**
      * @OA\Post(
      *     path="/login",

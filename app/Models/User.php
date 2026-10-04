@@ -15,6 +15,7 @@ class User extends Authenticatable
     protected $fillable = [
         'mobile',
         'password',
+        'selected_pos_code',
     ];
 
     protected $hidden = [

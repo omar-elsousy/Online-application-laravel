@@ -9,6 +9,11 @@ class IncentiveService
 {
     public function posCodeForUser(object $user): ?string
     {
+        $selectedPosCode = trim((string) ($user->selected_pos_code ?? ''));
+        if (preg_match('/^\d+_\d+$/', $selectedPosCode)) {
+            return $selectedPosCode;
+        }
+
         $pos = DB::connection('oracle_lmidc')->table('pos')->where('mobile', $user->mobile)->first();
         return $pos ? $pos->ter_id . '_' . $pos->pos_id : null;
     }
