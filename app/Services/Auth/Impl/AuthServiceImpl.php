@@ -234,6 +234,11 @@ class AuthServiceImpl implements AuthService
         return response()->json([
             'message' => 'تم تسجيل الدخول بنجاح',
             'token'   => $token,
+            'user' => [
+                'mobile' => $user->mobile,
+                'customer_name' => $pos ? (trim((string) $pos->name) ?: null) : null,
+                'pos_code' => $pos ? $pos->ter_id . '_' . $pos->pos_id : ($selectedPosCode ?: null),
+            ],
         ]);
     }
 
