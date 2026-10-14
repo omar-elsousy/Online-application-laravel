@@ -75,4 +75,38 @@ class MixRuleCalculatorTest extends TestCase
         $this->assertSame(1, $result['multiplier']);
         $this->assertSame(10.0, $result['discount']);
     }
+
+    public function test_mix_gift_tier_sums_quantities_across_eligible_products(): void
+    {
+        $rule = (object) [
+            'from_sales_val' => 8,
+            'to_sales_val' => 99999999,
+            'qty' => 8,
+            'val' => 1,
+            'gift_product_id' => 12021,
+            'discount_perc' => 0,
+        ];
+
+        foreach ([[6, 2], [4, 4], [5, 3]] as [$firstQuantity, $secondQuantity]) {
+            $result = MixRuleCalculator::evaluateAcrossLines([
+                ['quantity' => $firstQuantity, 'line_price' => 100],
+                ['quantity' => $secondQuantity, 'line_price' => 100],
+            ], $rule);
+
+            $this->assertNotNull($result);
+            $this->assertSame(1, $result['multiplier']);
+        }
+
+        $belowThreshold = MixRuleCalculator::evaluateAcrossLines([
+            ['quantity' => 5, 'line_price' => 100],
+            ['quantity' => 2, 'line_price' => 100],
+        ], $rule);
+        $twoGiftThresholds = MixRuleCalculator::evaluateAcrossLines([
+            ['quantity' => 8, 'line_price' => 100],
+            ['quantity' => 8, 'line_price' => 100],
+        ], $rule);
+
+        $this->assertNull($belowThreshold);
+        $this->assertSame(2, $twoGiftThresholds['multiplier']);
+    }
 }

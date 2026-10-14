@@ -109,7 +109,7 @@ class ProductServiceImpl implements ProductService
 
         $tax = round(($price->pricelist_carton * ($price->tax_percentage / 100)) + $price->product_tax, 1);
         $locale = request()->getPreferredLanguage(['ar', 'en']) ?? 'en';
-        $teaser = app(IncentiveService::class)->teasersForProducts(auth()->user(), [$product->product_id], $locale, true);
+        $teaser = app(IncentiveService::class)->teasersForProducts(auth()->user(), [$product->product_id], $locale);
 
         $image = DB::connection('oracle_sales')
             ->table('online_app_images')

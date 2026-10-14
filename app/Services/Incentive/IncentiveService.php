@@ -52,7 +52,7 @@ class IncentiveService
         ];
     }
 
-    public function teasersForProducts(object $user, array $productIds, string $locale = 'en', bool $includeGiftName = false): array
+    public function teasersForProducts(object $user, array $productIds, string $locale = 'en'): array
     {
         $posCode = $this->posCodeForUser($user);
         if (!$posCode || !$productIds) return [];
@@ -61,36 +61,67 @@ class IncentiveService
         $used = DB::connection('oracle_lmidc')->table('online_app_mix_log')->where('pos_code', $posCode)->where('status', 'USED')->pluck('incentive_id')->all();
         $rules = DB::connection('oracle_lmidc')->table('online_app_v_mix_active')
             ->whereIn('incentive_id', $seen)->whereIn('product_id', $productIds)
-            ->orderBy('product_id')->orderBy('from_sales_val')->get();
-        $giftProductIds = $rules->where('gift_product_id', '!=', 0)->pluck('gift_product_id')->unique()->values();
-        $giftNames = $giftProductIds->isEmpty()
-            ? collect()
-            : DB::connection('oracle_lmidc')->table('to_sfa_products_android')
-                ->whereIn('product_id', $giftProductIds)->pluck('product_ename', 'product_id');
+            ->orderBy('product_id')->orderBy('incentive_id')->orderBy('from_sales_val')->get();
         $teasers = [];
         foreach ($rules as $rule) {
             $productId = (string) $rule->product_id;
-            if (isset($teasers[$productId])) continue;
             $taxProducts = array_map('trim', explode(',', (string) $rule->tax_prods));
             if (!in_array($productId, $taxProducts, true)) continue;
             if ((int) $rule->repeated === 0 && in_array($rule->incentive_id, $used)) continue;
+
             if ((int) $rule->gift_product_id !== 0) {
-                $giftLabel = $locale === 'ar' ? 'هدية' : 'Gift';
-                $giftName = $giftNames[(string) $rule->gift_product_id] ?? $giftNames[$rule->gift_product_id] ?? null;
-                $teasers[$productId] = $includeGiftName && $giftName
-                    ? $giftLabel . ($locale === 'ar' ? ': ' : ': ') . $giftName
-                    : $giftLabel;
+                $giftProductId = (string) $rule->gift_product_id;
+                // Multiple rows for one incentive are usually its quantity
+                // tiers. Show the gift offer once on product cards instead
+                // of repeating an indistinguishable label per tier. Distinct
+                // gift products get numbered labels when there is more than one.
+                $teasers[$productId]['gift-' . $giftProductId] = '';
+                continue;
             } elseif ((float) $rule->discount_perc !== 0.0) {
-                $teasers[$productId] = $locale === 'ar'
+                $label = $locale === 'ar'
                     ? 'خصم ' . $rule->discount_perc . '%'
                     : 'Discount ' . $rule->discount_perc . '%';
             } else {
-                $teasers[$productId] = $locale === 'ar'
+                $label = $locale === 'ar'
                     ? 'خصم ' . $rule->val . ' ج.م'
                     : $rule->val . ' EGP off';
             }
+
+            // Keep every distinct discount incentive tier. Gift tiers are
+            // grouped above because their public label intentionally omits
+            // the tier details.
+            $offerKey = implode('|', [
+                (string) $rule->incentive_id,
+                (string) ($rule->grad_id ?? ''),
+                (string) $rule->from_sales_val,
+                (string) $rule->to_sales_val,
+                (string) $rule->qty,
+                (string) $rule->val,
+                (string) $rule->gift_product_id,
+                (string) $rule->discount_perc,
+            ]);
+            $teasers[$productId][$offerKey] = $label;
         }
-        return $teasers;
+
+        foreach ($teasers as &$offers) {
+            $giftKeys = array_values(array_filter(
+                array_keys($offers),
+                fn ($key) => str_starts_with((string) $key, 'gift-')
+            ));
+            $giftCount = count($giftKeys);
+
+            foreach ($giftKeys as $index => $key) {
+                $number = $index + 1;
+                $offers[$key] = $giftCount > 1
+                    ? ($locale === 'ar' ? 'هدية ' . $number : 'Gift ' . $number)
+                    : ($locale === 'ar' ? 'هدية' : 'Gift');
+            }
+        }
+        unset($offers);
+
+        return collect($teasers)
+            ->map(fn ($offers) => implode("\n", array_values($offers)))
+            ->all();
     }
     public function availableWallet(object $user, ?array $cartProductIds = null): Collection
     {
@@ -115,7 +146,9 @@ class IncentiveService
             ->join('incentive_types as it', 'it.incentive_id', '=', 'ia.incentive_type_id')
             ->where('ia.ter_id', $terId)->where('ia.pos_id', $posId)
             ->where('ia.recieved_flag', 0)->where('it.active_inc', 1)->where('it.incentive_type', 'FIX')
-            ->whereRaw('SYSDATE BETWEEN ia.from_date AND ia.to_date')
+            // Treat Oracle DATE bounds as inclusive calendar dates, regardless
+            // of any time component stored in FROM_DATE or TO_DATE.
+            ->whereRaw('ia.from_date < TRUNC(SYSDATE) + 1 AND ia.to_date >= TRUNC(SYSDATE)')
             ->select('ia.incentive_type_id', 'ia.incentive_value', 'ia.from_date', 'ia.to_date', 'it.tax_prods')
             ->orderBy('ia.to_date')
             ->get()
@@ -190,34 +223,91 @@ class IncentiveService
         $rules = DB::connection('oracle_lmidc')->table('online_app_v_mix_active')
             ->whereIn('incentive_id', $seen)->whereIn('product_id', $productIds)->get();
         $result = $empty;
+        $eligibleRules = $rules->filter(function ($rule) use ($used) {
+            $taxProducts = array_map('trim', explode(',', (string) $rule->tax_prods));
+            return in_array((string) $rule->product_id, $taxProducts, true)
+                && ((int) $rule->repeated !== 0 || !in_array($rule->incentive_id, $used));
+        });
 
-        foreach ($lines as $line) {
-            foreach ($rules->where('product_id', $line['product_id']) as $rule) {
-                $taxProducts = array_map('trim', explode(',', (string) $rule->tax_prods));
-                if (!in_array((string) $line['product_id'], $taxProducts, true)) continue;
-                if ((int) $rule->repeated === 0 && in_array($rule->incentive_id, $used)) continue;
-                $calculation = MixRuleCalculator::evaluate($line, $rule);
-                if ($calculation === null) continue;
+        // The active view emits one row per eligible product for the same
+        // incentive tier. Collapse those rows so a mixed cart (e.g. 6 + 2)
+        // is evaluated once using the combined quantity.
+        foreach ($eligibleRules->groupBy(fn ($rule) => $this->mixRuleGroupKey($rule)) as $ruleGroup) {
+            $rule = $ruleGroup->first();
+            $taxProducts = array_map('trim', explode(',', (string) $rule->tax_prods));
+            $eligibleLines = array_values(array_filter($lines, fn ($line) =>
+                in_array((string) $line['product_id'], $taxProducts, true)
+            ));
+            if (!$eligibleLines) continue;
 
-                if ((int) $rule->gift_product_id !== 0) {
-                    if (in_array((int) $rule->incentive_id, $removedGiftIncentives, true)) continue;
-                    $result['applied_ids'][] = (int) $rule->incentive_id;
-                    $result['banners'][$line['product_id']] = trim(($result['banners'][$line['product_id']] ?? '') . ' • ' . ($locale === 'ar' ? 'هدية' : 'Gift'), ' •');
-                    $result['gifts'][] = ['product_id' => $rule->gift_product_id, 'quantity' => $calculation['multiplier'] * (int) $rule->val, 'incentive_id' => $rule->incentive_id];
-                } elseif ((float) $rule->discount_perc !== 0.0) {
-                    $result['applied_ids'][] = (int) $rule->incentive_id;
-                    $label = $locale === 'ar' ? 'خصم ' . $rule->discount_perc . '%' : 'Discount ' . $rule->discount_perc . '%';
-                    $result['banners'][$line['product_id']] = trim(($result['banners'][$line['product_id']] ?? '') . ' • ' . $label, ' •');
-                    $result['discounts'][$line['product_id']] = ($result['discounts'][$line['product_id']] ?? 0) + $calculation['discount'];
-                } else {
-                    $result['applied_ids'][] = (int) $rule->incentive_id;
-                    $label = $locale === 'ar' ? 'خصم ' . $rule->val . ' ج.م' : $rule->val . ' EGP off';
-                    $result['banners'][$line['product_id']] = trim(($result['banners'][$line['product_id']] ?? '') . ' • ' . $label, ' •');
-                    $result['discounts'][$line['product_id']] = ($result['discounts'][$line['product_id']] ?? 0) + $calculation['discount'];
+            $calculation = MixRuleCalculator::evaluateAcrossLines($eligibleLines, $rule);
+            if ($calculation === null) continue;
+
+            if ((int) $rule->gift_product_id !== 0) {
+                if (in_array((int) $rule->incentive_id, $removedGiftIncentives, true)) continue;
+                $result['applied_ids'][] = (int) $rule->incentive_id;
+                foreach ($eligibleLines as $line) {
+                    $productId = (string) $line['product_id'];
+                    $this->appendIncentiveBanner(
+                        $result['banners'],
+                        $productId,
+                        $locale === 'ar' ? 'هدية' : 'Gift'
+                    );
                 }
+                $result['gifts'][] = [
+                    'product_id' => $rule->gift_product_id,
+                    'quantity' => $calculation['multiplier'] * (int) $rule->val,
+                    'incentive_id' => $rule->incentive_id,
+                ];
+                continue;
+            }
+
+            $result['applied_ids'][] = (int) $rule->incentive_id;
+            $label = (float) $rule->discount_perc !== 0.0
+                ? ($locale === 'ar' ? 'خصم ' . $rule->discount_perc . '%' : 'Discount ' . $rule->discount_perc . '%')
+                : ($locale === 'ar' ? 'خصم ' . $rule->val . ' ج.م' : $rule->val . ' EGP off');
+            $eligibleTotal = array_sum(array_map(fn ($line) => (float) $line['line_price'], $eligibleLines));
+            $discountLeft = round(min((float) $calculation['discount'], $eligibleTotal), 2);
+            foreach ($eligibleLines as $index => $line) {
+                $productId = (string) $line['product_id'];
+                $linePrice = (float) $line['line_price'];
+                $share = $index === array_key_last($eligibleLines)
+                    ? $discountLeft
+                    : round($eligibleTotal > 0 ? $calculation['discount'] * $linePrice / $eligibleTotal : 0, 2);
+                $share = min($share, $linePrice, $discountLeft);
+                $discountLeft = round($discountLeft - $share, 2);
+                $result['discounts'][$productId] = ($result['discounts'][$productId] ?? 0) + $share;
+                $this->appendIncentiveBanner($result['banners'], $productId, $label);
             }
         }
         return $result;
+    }
+
+    private function appendIncentiveBanner(array &$banners, string $productId, string $label): void
+    {
+        $current = $banners[$productId] ?? '';
+        $banners[$productId] = $current === '' ? $label : $current . "\n" . $label;
+    }
+
+    private function mixRuleGroupKey(object $rule): string
+    {
+        $taxProducts = array_values(array_unique(array_filter(
+            array_map('trim', explode(',', (string) $rule->tax_prods)),
+            fn ($productId) => $productId !== ''
+        )));
+        sort($taxProducts, SORT_STRING);
+
+        return implode('|', [
+            (string) $rule->incentive_id,
+            (string) $rule->from_sales_val,
+            (string) $rule->to_sales_val,
+            (string) $rule->qty,
+            (string) $rule->val,
+            (string) $rule->gift_product_id,
+            (string) $rule->discount_perc,
+            (string) $rule->repeated,
+            implode(',', $taxProducts),
+        ]);
     }
     private function giftLines(array $gifts): array
     {

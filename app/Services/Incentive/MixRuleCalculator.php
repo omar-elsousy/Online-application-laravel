@@ -48,4 +48,23 @@ class MixRuleCalculator
             'discount' => $multiplier * (float) $rule->val,
         ];
     }
+
+    /**
+     * Evaluate one MIX tier against all cart lines covered by its tax_prods.
+     * MIX view rows are repeated for each eligible product, but the tier is
+     * shared by those products, so quantities must be summed before matching.
+     */
+    public static function evaluateAcrossLines(array $lines, object $rule): ?array
+    {
+        if ($lines === []) {
+            return null;
+        }
+
+        $combinedLine = [
+            'quantity' => array_sum(array_map(fn ($line) => (float) $line['quantity'], $lines)),
+            'line_price' => array_sum(array_map(fn ($line) => (float) $line['line_price'], $lines)),
+        ];
+
+        return self::evaluate($combinedLine, $rule);
+    }
 }
